@@ -6,16 +6,16 @@
 //
 
 #import <UIKit/UIKit.h>
-@class SJPageItem;
+@class SJPageScrollViewItem;
 
 NS_ASSUME_NONNULL_BEGIN
 @interface UIViewController (SJPageViewControllerExtended)
-@property (nonatomic, strong, nullable) SJPageItem *sj_pageItem;
+@property (nonatomic, strong, nullable) SJPageScrollViewItem *sj_scrollViewItem;
 
 - (nullable __kindof UIScrollView *)sj_lookupScrollView;
 @end
 
-@interface SJPageItem : NSObject
+@interface SJPageScrollViewItem : NSObject
 @property (nonatomic, strong, nullable) __kindof UIScrollView *scrollView;
 @property (nonatomic) CGFloat intersection;
 @property (nonatomic) CGPoint contentOffset;

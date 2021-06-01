@@ -11,6 +11,7 @@
 #import "SJPageCollectionView.h"
 #import "UIViewController+SJPageViewControllerExtended.h"
 #import "UIScrollView+SJPageViewControllerExtended.h"
+#import "SJPageMenuBar.h"
 #import <UIKit/UIGestureRecognizerSubclass.h>
 #import <objc/message.h>
 
@@ -21,7 +22,12 @@ SJPageViewControllerOptionsKey const SJPageViewControllerOptionInterPageSpacingK
 static NSString *const kContentOffset = @"contentOffset";
 static NSString *const kState = @"state";
 static NSString *const kBounds = @"bounds";
+static NSString *const kFrame = @"frame";
 static NSString *const kReuseIdentifierForCell = @"1";
+
+@interface SJPageMenuBar (SJPageMenuBarPrivate)
+@property (nonatomic, weak, nullable) SJPageViewController *pageViewController;
+@end
 
 @interface SJPageViewController ()<UICollectionViewDataSource, SJPageCollectionViewDelegate, UICollectionViewDelegateFlowLayout> {
     NSDictionary<SJPageViewControllerOptionsKey, id> *_Nullable _options;
@@ -33,6 +39,8 @@ static NSString *const kReuseIdentifierForCell = @"1";
     BOOL _isResponse_didScrollInRange;
     BOOL _isResponse_headerViewVisibleRectDidChange;
     
+    BOOL _isResponse_minimumBottomInsetForViewController;
+    BOOL _isResponse_maximumTopInsetForViewController;
     BOOL _isResponse_heightForHeaderPinToVisibleBounds;
     BOOL _isResponse_heightForHeaderBounds;
     BOOL _isResponse_modeForHeader;
@@ -43,6 +51,7 @@ static NSString *const kReuseIdentifierForCell = @"1";
     BOOL _isResponse_didScroll;
     BOOL _isResponse_willBeginDecelerating;
     BOOL _isResponse_didEndDecelerating;
+    BOOL _isResponse_willLayoutSubviews;
 }
 @property (nonatomic, getter=isDataSourceLoaded) BOOL dataSourceLoaded;
 @property (nonatomic, strong, readonly) NSMutableDictionary<NSNumber *, __kindof UIViewController *> *viewControllers;
@@ -55,6 +64,8 @@ static NSString *const kReuseIdentifierForCell = @"1";
 @property (nonatomic, readonly) CGFloat heightForIntersectionBounds;
 @property (nonatomic, readonly) SJPageViewControllerHeaderMode modeForHeader;
 @property (nonatomic) CGFloat heightForHeaderBounds;
+
+@property (nonatomic, strong, nullable) SJPageMenuBar *pageMenuBar;
 @end
 
 @implementation SJPageViewController
@@ -79,7 +90,7 @@ static NSString *const kReuseIdentifierForCell = @"1";
 
 - (void)dealloc {
     [self _cleanHeaderView];
-    [self _cleanPageItems];
+    [self _cleanScrollViewItems];
 }
 
 - (void)viewDidLoad {
@@ -126,6 +137,17 @@ static NSString *const kReuseIdentifierForCell = @"1";
     return nil;
 }
 
+- (NSInteger)indexOfViewController:(UIViewController *)viewController {
+    __block NSInteger index = NSNotFound;
+    [self.viewControllers enumerateKeysAndObjectsUsingBlock:^(NSNumber * _Nonnull key, __kindof UIViewController * _Nonnull obj, BOOL * _Nonnull stop) {
+        if ( viewController == obj ) {
+            index = key.integerValue;
+            *stop = YES;
+        }
+    }];
+    return index;
+}
+
 - (BOOL)isViewControllerVisibleAtIndex:(NSInteger)idx {
     if ( [self _isSafeIndex:idx] ) {
         if ( idx == _focusedIndex ) return YES;
@@ -165,6 +187,16 @@ static NSString *const kReuseIdentifierForCell = @"1";
     return _collectionView.isDecelerating;
 }
 
+- (void)setPageMenuBar:(nullable SJPageMenuBar *)pageMenuBar {
+    _pageMenuBar.pageViewController = nil;
+    _pageMenuBar = pageMenuBar;
+    _pageMenuBar.pageViewController = self;
+    NSInteger focusedIndex = pageMenuBar.focusedIndex;
+    if ( focusedIndex != NSNotFound && focusedIndex != self.focusedIndex ) {
+        [self setViewControllerAtIndex:focusedIndex];
+    }
+}
+
 #pragma mark -
 
 - (void)setFocusedIndex:(NSInteger)focusedIndex {
@@ -185,8 +217,6 @@ static NSString *const kReuseIdentifierForCell = @"1";
     if ( dataSource != _dataSource ) {
         _dataSource = dataSource;
         
-        _isResponse_heightForHeaderPinToVisibleBounds = [dataSource respondsToSelector:@selector(heightForHeaderPinToVisibleBoundsWithPageViewController:)];
-        _isResponse_modeForHeader = [dataSource respondsToSelector:@selector(modeForHeaderWithPageViewController:)];
         _isResponse_viewForHeader = [dataSource respondsToSelector:@selector(viewForHeaderInPageViewController:)];
         [self reloadPageViewController];
     }
@@ -196,6 +226,8 @@ static NSString *const kReuseIdentifierForCell = @"1";
     if ( delegate != _delegate ) {
         _delegate = delegate;
         
+        _isResponse_heightForHeaderPinToVisibleBounds = [delegate respondsToSelector:@selector(heightForHeaderPinToVisibleBoundsWithPageViewController:)];
+        _isResponse_modeForHeader = [delegate respondsToSelector:@selector(modeForHeaderWithPageViewController:)];
         _isResponse_focusedIndexDidChange = [delegate respondsToSelector:@selector(pageViewController:focusedIndexDidChange:)];
         _isResponse_willDisplayViewController = [delegate respondsToSelector:@selector(pageViewController:willDisplayViewController:atIndex:)];
         _isResponse_didEndDisplayingViewController = [delegate respondsToSelector:@selector(pageViewController:didEndDisplayingViewController:atIndex:)];
@@ -206,6 +238,9 @@ static NSString *const kReuseIdentifierForCell = @"1";
         _isResponse_didEndDragging = [delegate respondsToSelector:@selector(pageViewControllerDidEndDragging:willDecelerate:)];
         _isResponse_willBeginDecelerating = [delegate respondsToSelector:@selector(pageViewControllerWillBeginDecelerating:)];
         _isResponse_didEndDecelerating = [delegate respondsToSelector:@selector(pageViewControllerDidEndDecelerating:)];
+        _isResponse_maximumTopInsetForViewController = [delegate respondsToSelector:@selector(pageViewController:maximumTopInsetForViewController:)];
+        _isResponse_minimumBottomInsetForViewController = [delegate respondsToSelector:@selector(pageViewController:minimumBottomInsetForViewController:)];
+        _isResponse_willLayoutSubviews = [delegate respondsToSelector:@selector(pageViewControllerWillLayoutSubviews:)];
     }
 }
 
@@ -263,9 +298,30 @@ static NSString *const kReuseIdentifierForCell = @"1";
             [self _insertHeaderViewForFocusedViewController];
         }
     }
-    else if ( context == &kBounds ) {
-        _heightForHeaderBounds = _headerView.bounds.size.height;
-        [self _setupContentInsetForChildScrollView:self.focusedViewController.sj_lookupScrollView];
+    else if ( context == &kBounds || context == &kFrame ) {
+        if ( !_headerView.sj_locked ) {
+            UIView *target = object;
+            CGFloat height = target.bounds.size.height;
+            if ( height != _heightForHeaderBounds ) {
+                CGFloat offsetY = height - _heightForHeaderBounds;
+                _heightForHeaderBounds = height;
+                if ( target != _headerView ) {
+                    CGRect bounds = _headerView.frame;
+                    bounds.size.height = _heightForHeaderBounds;
+                    [_headerView sj_lock];
+                    _headerView.frame = bounds;
+                    [_headerView sj_unlock];
+                }
+                [self _setupContentInsetForChildScrollView:self.focusedViewController.sj_lookupScrollView];
+                UIScrollView *childScrollView = self.focusedViewController.sj_lookupScrollView;
+                if ( childScrollView != nil ) {
+                    [self _setupContentInsetForChildScrollView:childScrollView];
+                    CGPoint offset = childScrollView.contentOffset;
+                    offset.y -= offsetY;
+                    [childScrollView setContentOffset:offset];
+                }
+            }
+        }
     }
 }
 
@@ -278,48 +334,50 @@ static NSString *const kReuseIdentifierForCell = @"1";
     if ( newValue == oldValue ) return;
     [self _setupContentInsetForChildScrollView:childScrollView];
 
-    // 同步 pageItem, 当前 child scrollView 的 contentOffset
+    // 同步 scrollViewItem, 当前 child scrollView 的 contentOffset
     if ( ![childScrollView sj_locked] ) {
         for ( UIViewController *vc in self.viewControllers.allValues ) {
-            SJPageItem *pageItem = vc.sj_pageItem;
-            if ( childScrollView == pageItem.scrollView ) {
-                pageItem.contentOffset = childScrollView.contentOffset;
+            SJPageScrollViewItem *scrollViewItem = vc.sj_scrollViewItem;
+            if ( childScrollView == scrollViewItem.scrollView ) {
+                scrollViewItem.contentOffset = childScrollView.contentOffset;
                 break;
             }
         }
     }
     
     // header的悬浮控制
-    if ( childScrollView == self.currentVisibleViewController.sj_pageItem.scrollView ) {
+    if ( childScrollView == self.currentVisibleViewController.sj_scrollViewItem.scrollView ) {
         
         [self _insertHeaderViewForFocusedViewController];
         
         CGFloat offset = childScrollView.contentOffset.y;
         CGRect frame = _headerView.frame;
 
-        CGFloat heightForHeaderBounds = self.heightForHeaderBounds;
-        CGFloat heightForHeaderPinToVisibleBounds = self.heightForHeaderPinToVisibleBounds;
-        __auto_type modeForHeader = self.modeForHeader;
-        CGFloat topPinOffset = offset - heightForHeaderBounds + heightForHeaderPinToVisibleBounds;
+        CGFloat topInset = [self _maximumTopInsetForChildScrollView:childScrollView];
+        CGFloat headerHeight = self.heightForHeaderBounds;
+        CGFloat maxTopOffset = headerHeight + topInset;
+        CGFloat pinnedHeight = self.heightForHeaderPinToVisibleBounds;
+        __auto_type headerMode = self.modeForHeader;
+        CGFloat pinnedOffset = offset - headerHeight + pinnedHeight;
         CGFloat y = frame.origin.y;
         // 向上移动
         if ( newValue >= oldValue ) {
-            if ( y <= topPinOffset ) y = topPinOffset;
+            if ( y <= pinnedOffset ) y = pinnedOffset;
         }
         // 向下移动
         else {
             y += newValue - oldValue;
-            if ( y <= -heightForHeaderBounds ) y = -heightForHeaderBounds;
+            if ( y <= -maxTopOffset ) y = -maxTopOffset;
         }
         
-        switch ( modeForHeader ) {
+        switch ( headerMode ) {
             case SJPageViewControllerHeaderModeTracking: {
                 frame.origin.x = 0;
                 frame.origin.y = y;
             }
                 break;
             case SJPageViewControllerHeaderModePinnedToTop: {
-                if ( offset <= -heightForHeaderBounds ) {
+                if ( offset <= -maxTopOffset ) {
                     y = offset;
                 }
                 
@@ -328,33 +386,33 @@ static NSString *const kReuseIdentifierForCell = @"1";
             }
                 break;
             case SJPageViewControllerHeaderModeAspectFill: {
-                CGFloat extend = (-offset - heightForHeaderBounds);
-                if ( offset <= -heightForHeaderBounds ) {
+                CGFloat extend = 0;
+                if ( offset <= -maxTopOffset ) {
+                    extend = (-offset - maxTopOffset);
                     y = offset;
-                }
-                else {
-                    extend = 0;
                 }
                 
                 frame.origin.x = -extend * 0.5;
                 frame.origin.y = y;
                 frame.size.width = self.view.bounds.size.width + extend;
-                frame.size.height = heightForHeaderBounds + extend;
+                frame.size.height = headerHeight + extend;
             }
                 break;
         }
         
+        [_headerView sj_lock];
         _headerView.frame = frame;
-        if ( modeForHeader == SJPageViewControllerHeaderModeAspectFill ) [_headerView layoutIfNeeded];
+        [_headerView sj_unlock];
+        if ( headerMode == SJPageViewControllerHeaderModeAspectFill ) [_headerView layoutIfNeeded];
         
-        CGFloat indictorTopInset = heightForHeaderBounds;
-        if ( y <= -heightForHeaderBounds ) indictorTopInset = -y;
+        CGFloat indictorTopInset = maxTopOffset;
+        if ( y <= -maxTopOffset ) indictorTopInset = -y;
         if ( childScrollView.scrollIndicatorInsets.top != indictorTopInset ) {
             childScrollView.scrollIndicatorInsets = UIEdgeInsetsMake(indictorTopInset, 0, 0, 0);
         }
         
         if ( _isResponse_headerViewVisibleRectDidChange ) {
-            CGFloat progress = 1 - ABS(y - offset) / heightForHeaderBounds;
+            CGFloat progress = 1 - ABS(y - offset) / maxTopOffset;
             if ( progress <= 0 ) progress = 0;
             else if ( progress >= 1 ) progress = 1;
             CGRect rect = (CGRect){0, 0, frame.size.width, frame.size.height * progress};
@@ -422,13 +480,13 @@ static NSString *const kReuseIdentifierForCell = @"1";
             UIScrollView *childScrollView = [newViewController sj_lookupScrollView];
             NSAssert(childScrollView != nil, @"The scrollView can't be nil!");
             CGRect bounds = cell.bounds;
-            SJPageItem *_Nullable pageItem = newViewController.sj_pageItem;
-            if ( pageItem == nil ) {
-                pageItem = SJPageItem.new;
-                pageItem.scrollView = childScrollView;
-                newViewController.sj_pageItem = pageItem;
+            SJPageScrollViewItem *_Nullable scrollViewItem = newViewController.sj_scrollViewItem;
+            if ( scrollViewItem == nil ) {
+                scrollViewItem = SJPageScrollViewItem.new;
+                scrollViewItem.scrollView = childScrollView;
+                newViewController.sj_scrollViewItem = scrollViewItem;
 
-                // pageItem 为空, 则为首次出现
+                // scrollViewItem 为空, 则为首次出现
                 //      - 需修正 childScrollView 的 scrollIndicatorInsets & contentInset & contentOffset
                 //      - 是否需要添加 headerView 到 第一个显示的 childScrollView 中
                 //      - kvo contentOffset
@@ -440,28 +498,33 @@ static NSString *const kReuseIdentifierForCell = @"1";
                     childScrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
                 }
                 CGFloat heightForHeaderBounds = self.heightForHeaderBounds;
+                CGFloat topInset = [self _maximumTopInsetForChildScrollView:childScrollView];
+                CGFloat offset = heightForHeaderBounds + topInset;
                 if ( _headerView.superview == nil ) {
-                    _headerView.frame = CGRectMake(0, -heightForHeaderBounds, bounds.size.width, heightForHeaderBounds);
+                    [_headerView sj_lock];
+                    _headerView.frame = CGRectMake(0, -offset, bounds.size.width, heightForHeaderBounds);
+                    [_headerView sj_unlock];
                     [childScrollView addSubview:_headerView];
                 }
-                childScrollView.scrollIndicatorInsets = UIEdgeInsetsMake(heightForHeaderBounds, 0, 0, 0);
+                childScrollView.scrollIndicatorInsets = UIEdgeInsetsMake(offset, 0, 0, 0);
                 [self _setupContentInsetForChildScrollView:childScrollView];
-                [childScrollView setContentOffset:CGPointMake(0, -heightForHeaderBounds) animated:NO];
+                [childScrollView setContentOffset:CGPointMake(0, -offset) animated:NO];
                 [childScrollView addObserver:self forKeyPath:kContentOffset options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld context:(void *)&kContentOffset];
                 [childScrollView.panGestureRecognizer addObserver:self forKeyPath:kState options:NSKeyValueObservingOptionNew context:(void *)&kState];
+                scrollViewItem.contentOffset = CGPointMake(0, -topInset);
             }
             else {
                 [self _setupContentInsetForChildScrollView:childScrollView];
             }
             
-            if ( [pageItem.scrollView sj_locked] == NO ) {
+            if ( [scrollViewItem.scrollView sj_locked] == NO ) {
                 CGFloat intersection = self.heightForIntersectionBounds;
-                CGPoint contentOffset = pageItem.contentOffset;
-                contentOffset.y += pageItem.intersection - intersection;
-                if ( !CGPointEqualToPoint(pageItem.scrollView.contentOffset, contentOffset) ) {
-                    [pageItem.scrollView sj_lock];
-                    [pageItem.scrollView setContentOffset:contentOffset animated:NO];
-                    [pageItem.scrollView sj_unlock];
+                CGPoint contentOffset = scrollViewItem.contentOffset;
+                contentOffset.y += scrollViewItem.intersection - intersection;
+                if ( !CGPointEqualToPoint(scrollViewItem.scrollView.contentOffset, contentOffset) ) {
+                    [scrollViewItem.scrollView sj_lock];
+                    [scrollViewItem.scrollView setContentOffset:contentOffset animated:NO];
+                    [scrollViewItem.scrollView sj_unlock];
                 }
             }
             
@@ -479,9 +542,9 @@ static NSString *const kReuseIdentifierForCell = @"1";
 - (void)collectionView:(UICollectionView *)collectionView didEndDisplayingCell:(SJPageViewControllerItemCell *)cell forItemAtIndexPath:(NSIndexPath *)indexPath {
     UIViewController *viewController = cell.viewController;
     if ( _hasHeader ) {
-        SJPageItem *pageItem = viewController.sj_pageItem;
-        pageItem.intersection = self.heightForIntersectionBounds;
-        pageItem.contentOffset = pageItem.scrollView.contentOffset;
+        SJPageScrollViewItem *scrollViewItem = viewController.sj_scrollViewItem;
+        scrollViewItem.intersection = self.heightForIntersectionBounds;
+        scrollViewItem.contentOffset = scrollViewItem.scrollView.contentOffset;
     }
 
     if ( _isResponse_didEndDisplayingViewController ) {
@@ -547,6 +610,22 @@ static NSString *const kReuseIdentifierForCell = @"1";
 
 #pragma mark -
 
+/// childScrollView.contentInset.top
+- (CGFloat)_maximumTopInsetForChildScrollView:(UIScrollView *)childScrollView {
+    if ( _isResponse_maximumTopInsetForViewController ) {
+        return [_delegate pageViewController:self maximumTopInsetForViewController:[childScrollView sj_page_lookupResponderForClass:UIViewController.class]];
+    }
+    return _maximumTopInset;
+}
+
+/// childScrollView.contentInset.bottom
+- (CGFloat)_minimumBottomInsetForChildScrollView:(UIScrollView *)childScrollView {
+    if ( _isResponse_minimumBottomInsetForViewController ) {
+        return [_delegate pageViewController:self minimumBottomInsetForViewController:[childScrollView sj_page_lookupResponderForClass:UIViewController.class]];
+    }
+    return _minimumBottomInset;
+}
+
 - (CGFloat)heightForIntersectionBounds {
     if ( _headerView != nil ) {
         CGRect rect = [_headerView convertRect:_headerView.bounds toView:self.view];
@@ -562,14 +641,14 @@ static NSString *const kReuseIdentifierForCell = @"1";
 
 - (CGFloat)heightForHeaderPinToVisibleBounds {
     if ( _isResponse_heightForHeaderPinToVisibleBounds ) {
-        return [self.dataSource heightForHeaderPinToVisibleBoundsWithPageViewController:self];
+        return [self.delegate heightForHeaderPinToVisibleBoundsWithPageViewController:self];
     }
     return 0;
 }
 
 - (SJPageViewControllerHeaderMode)modeForHeader {
     if ( _isResponse_modeForHeader )
-        return [self.dataSource modeForHeaderWithPageViewController:self];
+        return [self.delegate modeForHeaderWithPageViewController:self];
     return 0;
 }
 
@@ -577,6 +656,9 @@ static NSString *const kReuseIdentifierForCell = @"1";
     if ( _headerView == nil ) {
         if ( _isResponse_viewForHeader ) {
             _headerView = [self.dataSource viewForHeaderInPageViewController:self];
+            UIView *target = [_headerView conformsToProtocol:@protocol(SJPageViewControllerHeaderViewProtocol)] ? [(id<SJPageViewControllerHeaderViewProtocol>)_headerView contentView] : _headerView;
+            [target addObserver:self forKeyPath:kBounds options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionInitial context:(void *)&kBounds];
+            [target addObserver:self forKeyPath:kFrame options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionInitial context:(void *)&kFrame];
         }
     }
     return _headerView;
@@ -592,6 +674,9 @@ static NSString *const kReuseIdentifierForCell = @"1";
     if ( !CGRectEqualToRect(_previousBounds, bounds) ) {
         _previousBounds = bounds;
         [self _remakeConstraints];
+    }
+    if ( _isResponse_willLayoutSubviews ) {
+        [_delegate pageViewControllerWillLayoutSubviews:self];
     }
 }
 
@@ -611,6 +696,11 @@ static NSString *const kReuseIdentifierForCell = @"1";
 
     if ( left >= 0 && right < self.numberOfViewControllers ) {
         CGFloat progress = position - left;
+        
+        NSRange range = NSMakeRange(left, right - left);
+        if ( _pageMenuBar != nil ) {
+            [_pageMenuBar scrollInRange:range distanceProgress:progress];
+        }
         
         if ( _isResponse_didScrollInRange )
             [self.delegate pageViewController:self didScrollInRange:NSMakeRange(left, right - left) distanceProgress:progress];
@@ -639,7 +729,9 @@ static NSString *const kReuseIdentifierForCell = @"1";
             frame.origin.x = 0;
         }
         frame.size = CGSizeMake(self.view.bounds.size.width, self.heightForHeaderBounds);
+        [_headerView sj_lock];
         _headerView.frame = frame;
+        [_headerView sj_unlock];
         if ( _headerView.superview != self.view ) {
             [self.view insertSubview:_headerView aboveSubview:_collectionView];
         }
@@ -649,10 +741,12 @@ static NSString *const kReuseIdentifierForCell = @"1";
 - (void)_insertHeaderViewForFocusedViewController {
     if ( _hasHeader ) {
         // 停止滑动时, 将 headerView 恢复到 child scrollView 中
-        UIScrollView *childScrollView = self.focusedViewController.sj_pageItem.scrollView;
+        UIScrollView *childScrollView = self.focusedViewController.sj_scrollViewItem.scrollView;
         CGRect frame = [_headerView.superview convertRect:_headerView.frame toView:childScrollView];
 //        frame.size = CGSizeMake(self.view.bounds.size.width, self.heightForHeaderBounds);
+        [_headerView sj_lock];
         _headerView.frame = frame;
+        [_headerView sj_unlock];
         [childScrollView addSubview:_headerView];
     }
 }
@@ -675,13 +769,13 @@ static NSString *const kReuseIdentifierForCell = @"1";
     return rect;
 }
 
-- (void)_cleanPageItems {
+- (void)_cleanScrollViewItems {
     for ( UIViewController *vc in self.viewControllers.allValues ) {
-        SJPageItem *item = vc.sj_pageItem;
+        SJPageScrollViewItem *item = vc.sj_scrollViewItem;
         if ( item != nil ) {
             [item.scrollView.panGestureRecognizer removeObserver:self forKeyPath:kState];
             [item.scrollView removeObserver:self forKeyPath:kContentOffset];
-            vc.sj_pageItem = nil;
+            vc.sj_scrollViewItem = nil;
         }
     }
 }
@@ -689,6 +783,7 @@ static NSString *const kReuseIdentifierForCell = @"1";
 - (void)_cleanHeaderView {
     if ( _headerView != nil ) {
         [_headerView removeObserver:self forKeyPath:kBounds];
+        [_headerView removeObserver:self forKeyPath:kFrame];
         [_headerView removeFromSuperview];
         _headerView = nil;
         _hasHeader = NO;
@@ -699,19 +794,24 @@ static NSString *const kReuseIdentifierForCell = @"1";
     if ( !childScrollView ) return;
     CGFloat heightForHeaderBounds = self.heightForHeaderBounds;
     CGFloat heightForHeaderPinToVisibleBounds = self.heightForHeaderPinToVisibleBounds;
+
+    CGFloat minimumBottomInset = [self _minimumBottomInsetForChildScrollView:childScrollView];
+    CGFloat maximumTopInset = [self _maximumTopInsetForChildScrollView:childScrollView];
+    
     CGRect bounds = self.view.bounds;
     CGFloat boundsHeight = bounds.size.height;
     CGFloat contentHeight = childScrollView.contentSize.height;
-    CGFloat bottomInset = _minimumBottomInsetForChildScrollView;
+    
+    CGFloat topInset = heightForHeaderBounds + maximumTopInset;
+    CGFloat bottomInset = minimumBottomInset;
     if ( contentHeight < boundsHeight ) {
         bottomInset = ceil(boundsHeight - contentHeight - heightForHeaderPinToVisibleBounds);
     }
-    
-    if ( bottomInset < _minimumBottomInsetForChildScrollView ) bottomInset = _minimumBottomInsetForChildScrollView;
+    if ( bottomInset < minimumBottomInset ) bottomInset = minimumBottomInset;
     
     UIEdgeInsets insets = childScrollView.contentInset;
-    if ( insets.top != heightForHeaderBounds || insets.bottom != bottomInset ) {
-        insets.top = heightForHeaderBounds;
+    if ( insets.top != topInset || insets.bottom != bottomInset ) {
+        insets.top = topInset;
         insets.bottom = bottomInset;
         childScrollView.contentInset = insets;
     }
@@ -720,17 +820,13 @@ static NSString *const kReuseIdentifierForCell = @"1";
 - (void)_reloadPageViewController {
     self.dataSourceLoaded = YES;
     [self _cleanHeaderView];
-    [self _cleanPageItems];
+    [self _cleanScrollViewItems];
     [self.viewControllers removeAllObjects];
     [self.collectionView reloadData];
     
     NSInteger numberOfViewControllers = self.numberOfViewControllers;
     if ( numberOfViewControllers != 0 ) {
         _hasHeader = self.headerView != nil;
-        if ( _hasHeader ) {
-            [_headerView addObserver:self forKeyPath:kBounds options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionInitial context:(void *)&kBounds];
-        }
-        
         NSInteger focusedIndex = _focusedIndex;
         if ( focusedIndex == NSNotFound )
             focusedIndex = 0;
@@ -770,4 +866,68 @@ static NSString *const kReuseIdentifierForCell = @"1";
     [viewController didMoveToParentViewController:nil];
 }
 @end
+
+@implementation SJPageItem
+- (instancetype)initWithType:(NSInteger)type viewController:(UIViewController *)viewController menuView:(UIView<SJPageMenuItemView> *)menuView {
+    self = [super init];
+    if ( self ) {
+        _type = type;
+        _viewController = viewController;
+        _menuView = menuView;
+    }
+    return self;
+}
+@end
+
+@implementation SJPageItemManager {
+    NSMutableArray<SJPageItem *> *_items;
+}
+
+- (NSInteger)numberOfPageItems {
+    return _items.count;
+}
+
+- (nullable __kindof UIViewController *)viewControllerAtIndex:(NSInteger)index {
+    if ( [self _isGettingSafeIndex:index] ) {
+        return _items[index].viewController;
+    }
+    return nil;
+}
+
+- (nullable __kindof UIView<SJPageMenuItemView> *)menuViewAtIndex:(NSInteger)index {
+    if ( [self _isGettingSafeIndex:index] ) {
+        return _items[index].menuView;
+    }
+    return nil;
+}
+
+- (nullable SJPageItem *)pageItemForType:(NSInteger)type {
+    for ( SJPageItem *item in _items ) {
+        if ( item.type == type )
+            return item;
+    }
+    return nil;
+}
+
+- (void)addPageItem:(SJPageItem *)pageItem {
+    if ( pageItem == nil )
+        return;
+    if ( _items == nil )
+        _items = NSMutableArray.array;
+    [_items addObject:pageItem];
+}
+
+- (void)addPageItemWithType:(NSInteger)type viewController:(UIViewController *)viewController menuView:(UIView<SJPageMenuItemView> *)menuView {
+    return [self addPageItem:[SJPageItem.alloc initWithType:type viewController:viewController menuView:menuView]];
+}
+
+#pragma mark - mark
+
+- (BOOL)_isGettingSafeIndex:(NSInteger)index {
+    return index >= 0 && index < _items.count;
+}
+
+@end
+
+
 NS_ASSUME_NONNULL_END

@@ -1,6 +1,6 @@
 {
   "name": "SJUIKit",
-  "version": "0.0.0.44",
+  "version": "0.0.0.52",
   "summary": "SJUIKit.",
   "description": "`Objective-C` UIKit",
   "homepage": "https://gitee.com/changsanjiang/SJUIKit",
@@ -13,12 +13,15 @@
   },
   "source": {
     "git": "https://gitee.com/changsanjiang/SJUIKit.git",
-    "tag": "0.0.0.44"
+    "tag": "0.0.0.52"
   },
   "platforms": {
-    "ios": "8.0"
+    "ios": "8.0",
+    "tvos": "8.0"
   },
-  "source_files": "SJUIKit/*.{h,m}",
+  "ios": {
+    "source_files": "SJUIKit/*.{h,m}"
+  },
   "subspecs": [
     {
       "name": "AsyncLoad",
@@ -118,6 +121,11 @@
     {
       "name": "SQLite3",
       "source_files": "SJUIKit/SQLite3/*.{h,m}",
+      "dependencies": {
+        "YYModel": [
+
+        ]
+      },
       "subspecs": [
         {
           "name": "Protocol",

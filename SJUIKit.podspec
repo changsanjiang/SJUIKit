@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'SJUIKit'
-  s.version          = '0.0.0.50'
+  s.version          = '0.0.0.55'
   s.summary          = 'SJUIKit.'
 
 # This description is used to generate tags and improve search results.
@@ -25,7 +25,7 @@ Pod::Spec.new do |s|
   # s.screenshots     = 'www.example.com/screenshots_1', 'www.example.com/screenshots_2'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
   s.author           = { 'changsanjiang@gmail.com' => 'changsanjiang@gmail.com' }
-  s.source           = { :git => 'https://github.com/changsanjiang/SJUIKit.git', :tag => s.version.to_s }
+  s.source           = { :git => 'https://gitee.com/changsanjiang/SJUIKit.git', :tag => s.version.to_s }
   # s.social_media_url = 'https://twitter.com/<TWITTER_USERNAME>'
 
   s.ios.deployment_target = '8.0'
@@ -108,21 +108,14 @@ Pod::Spec.new do |s|
           sss.source_files = 'SJUIKit/SQLite3/Core/*.{h,m}'
           sss.dependency 'SJUIKit/SQLite3/Protocol'
       end
+      
+      ss.dependency 'YYModel'
   end
   
   s.subspec 'PageViewController' do |ss|
-    ss.subspec 'PageViewController' do |sss|
-        sss.source_files = 'SJUIKit/PageViewController/PageViewController/*.{h,m}'
-        sss.subspec 'Core' do |ssss|
-          ssss.source_files = 'SJUIKit/PageViewController/PageViewController/Core/**/*.{h,m}'
-        end
-    end
-    
-    ss.subspec 'PageMenuBar' do |sss|
-        sss.source_files = 'SJUIKit/PageViewController/PageMenuBar/*.{h,m}'
-        sss.subspec 'Core' do |ssss|
-          ssss.source_files = 'SJUIKit/PageViewController/PageMenuBar/Core/**/*.{h,m}'
-        end
+    ss.source_files = 'SJUIKit/PageViewController/*.{h,m}'
+    ss.subspec 'Core' do |sss|
+      sss.source_files = 'SJUIKit/PageViewController/Core/*.{h,m}'
     end
   end
 end

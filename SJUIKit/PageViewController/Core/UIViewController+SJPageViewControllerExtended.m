@@ -32,16 +32,16 @@ NS_ASSUME_NONNULL_BEGIN
     return nil;
 }
 
-- (void)setSj_pageItem:(nullable SJPageItem *)sj_pageItem {
-    objc_setAssociatedObject(self, @selector(sj_pageItem), sj_pageItem, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+- (void)setSj_scrollViewItem:(nullable SJPageScrollViewItem *)sj_scrollViewItem {
+    objc_setAssociatedObject(self, @selector(sj_scrollViewItem), sj_scrollViewItem, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-- (nullable SJPageItem *)sj_pageItem {
+- (nullable SJPageScrollViewItem *)sj_scrollViewItem {
     return objc_getAssociatedObject(self, _cmd);
 }
 @end
 
-@implementation SJPageItem
+@implementation SJPageScrollViewItem
 
 @end
 NS_ASSUME_NONNULL_END

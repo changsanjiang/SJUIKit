@@ -128,52 +128,24 @@ char const SJRefreshingNonePageSize = -1;
 
 
 @implementation UIScrollView (SJSetupRefresh)
-- (void)sj_setupRefreshingWithRefreshingBlock:(void(^)(__kindof UIScrollView *scrollView, NSInteger pageNum))refreshingBlock {
-    [self _sj_setupRefreshingWithEnableHeader:YES
-                                 enableFooter:NO
-                                     pageSize:SJRefreshingNonePageSize
-                                 beginPageNum:0
-                              refreshingBlock:refreshingBlock];
-}
 
-- (void)sj_setupRefreshingWithPageSize:(short)pageSize
-                          beginPageNum:(NSInteger)beginPageNum
-                       refreshingBlock:(void(^)(__kindof UIScrollView *scrollView, NSInteger pageNum))refreshingBlock {
-    [self _sj_setupRefreshingWithEnableHeader:YES
-                                 enableFooter:YES
-                                     pageSize:pageSize
-                                 beginPageNum:beginPageNum
-                              refreshingBlock:refreshingBlock];
-}
-- (void)sj_setupFooterRefreshingWithPageSize:(short)pageSize beginPageNum:(NSInteger)beginPageNum refreshingBlock:(void (^)(__kindof UIScrollView * _Nonnull, NSInteger))refreshingBlock {
-    [self _sj_setupRefreshingWithEnableHeader:NO
-                                 enableFooter:YES
-                                     pageSize:pageSize
-                                 beginPageNum:beginPageNum
-                              refreshingBlock:refreshingBlock];
-}
-- (void)_sj_setupRefreshingWithEnableHeader:(BOOL)enableHeader
-                               enableFooter:(BOOL)enableFooter
-                                   pageSize:(short)pageSize
-                               beginPageNum:(NSInteger)beginPageNum
-                            refreshingBlock:(void(^)(__kindof UIScrollView *scrollView, NSInteger pageNum))refreshingBlock {
-    
+- (void)sj_setupRefreshingWithOptions:(SJRefreshOptions *)options {
     SJRefreshConfig *config = self.sj_refreshConfig;
     
     __weak typeof(self) _self = self;
-    if ( enableHeader ) {
+    if ( !options.isDisabledHeaderRefreshing ) {
         self.mj_header = [MJRefreshGifHeader headerWithRefreshingBlock:^{
             __strong typeof(_self) self = _self;
             if ( !self ) return ;
-            refreshingBlock(self, config.sj_pageNum = config.sj_beginPageNum);
+            options.refreshingExecuteBlock(self, config.sj_pageNum = config.sj_beginPageNum);
         }];
     }
     
-    if ( enableFooter ) {
+    if ( !options.isDisabledFooterRefreshing ) {
         self.mj_footer = [MJRefreshAutoGifFooter footerWithRefreshingBlock:^{
             __strong typeof(_self) self = _self;
             if ( !self ) return;
-            refreshingBlock(self, config.sj_pageNum);
+            options.refreshingExecuteBlock(self, config.sj_pageNum);
         }];
     }
     
@@ -181,20 +153,38 @@ char const SJRefreshingNonePageSize = -1;
         self.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     }
     
-    config.sj_pageSize = pageSize;
-    if ( 0 != beginPageNum ) config.sj_beginPageNum = beginPageNum;
-    config.sj_pageNum = beginPageNum;
+    config.sj_pageSize = options.pageSize;
+    config.sj_beginPageNum = options.beginPageNum;
+    config.sj_pageNum = options.beginPageNum;
     self.mj_footer.hidden = YES;
     
     [self sj_updateRefreshConfig];
+
 }
 
+- (void)sj_setupRefreshingWithRefreshingBlock:(void(^)(__kindof UIScrollView *scrollView, NSInteger pageNum))refreshingBlock {
+    SJRefreshOptions *options = [SJRefreshOptions.alloc initWithBeginPageNum:0 pageSize:SJRefreshingNonePageSize disabledHeaderRefreshing:NO disabledFooterRefreshing:YES refreshingExecuteBlock:refreshingBlock];
+    [self sj_setupRefreshingWithOptions:options];
+}
+
+- (void)sj_setupRefreshingWithPageSize:(short)pageSize
+                          beginPageNum:(NSInteger)beginPageNum
+                       refreshingBlock:(void(^)(__kindof UIScrollView *scrollView, NSInteger pageNum))refreshingBlock {
+    SJRefreshOptions *options = [SJRefreshOptions.alloc initWithBeginPageNum:beginPageNum pageSize:pageSize disabledHeaderRefreshing:NO disabledFooterRefreshing:NO refreshingExecuteBlock:refreshingBlock];
+    [self sj_setupRefreshingWithOptions:options];
+}
+
+- (void)sj_setupFooterRefreshingWithPageSize:(short)pageSize beginPageNum:(NSInteger)beginPageNum refreshingBlock:(void (^)(__kindof UIScrollView * _Nonnull, NSInteger))refreshingBlock {
+    SJRefreshOptions *options = [SJRefreshOptions.alloc initWithBeginPageNum:beginPageNum pageSize:pageSize disabledHeaderRefreshing:YES disabledFooterRefreshing:NO refreshingExecuteBlock:refreshingBlock];
+    [self sj_setupRefreshingWithOptions:options];
+}
+ 
 - (void)sj_endRefreshingWithItemCount:(NSUInteger)itemCount {
     [self sj_endRefreshing];
     SJRefreshConfig *config = self.sj_refreshConfig;
     
-    /// header
-    if ( config.sj_pageNum == config.sj_beginPageNum && self.mj_header ) {
+    /// hidden footer
+    if ( config.sj_pageNum == config.sj_beginPageNum ) {
         if ( itemCount == 0 || itemCount == SJRefreshingNonePageSize ) { // 如果没有数据
             self.mj_footer.hidden = YES;
         }
@@ -210,7 +200,10 @@ char const SJRefreshingNonePageSize = -1;
         else if ( self.mj_footer.state == MJRefreshStateNoMoreData ) [self.mj_footer resetNoMoreData];
         else [self.mj_footer endRefreshing];
     }
-    config.sj_pageNum += 1;
+    
+    if ( itemCount != 0 ) {
+        config.sj_pageNum += 1;
+    }
 }
 
 - (void)sj_endRefreshing {
@@ -225,37 +218,57 @@ char const SJRefreshingNonePageSize = -1;
 
 - (void)sj_exeHeaderRefreshingAnimated:(BOOL)animated {
     if ( self.mj_header.state == MJRefreshStateRefreshing ) {
+        // resend request
+        if ( self.mj_header.refreshingBlock != nil )
+            self.mj_header.refreshingBlock();
         return;
     }
-    if ( self.mj_header.state != MJRefreshStateIdle ) [self.mj_header endRefreshing];
-    if ( animated ) {
-        [self.mj_header beginRefreshing];
-    }
-    else {
-        if ( self.mj_header.refreshingBlock != nil ) self.mj_header.refreshingBlock();
+    
+    if ( self.mj_header.state != MJRefreshStateIdle ) {
+        [self.mj_header endRefreshing];
     }
     
-    [self _showOrHiddenPlaceholderViewIfNeeded];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ( animated ) {
+            [self.mj_header beginRefreshing];
+        }
+        else {
+            if ( self.mj_header.refreshingBlock != nil ) self.mj_header.refreshingBlock();
+        }
+        
+        [self _showOrHiddenPlaceholderViewIfNeeded];
+    });
 }
 
 - (void)sj_exeFooterRefreshing {
     if ( self.mj_footer.state == MJRefreshStateRefreshing ) {
+        // resend request
+        if ( self.mj_footer.refreshingBlock != nil )
+            self.mj_footer.refreshingBlock();
         return;
     }
+    
     self.mj_footer.hidden = NO;
-    if ( self.mj_footer.state != MJRefreshStateIdle ) [self.mj_footer endRefreshing];
-    if ( [self.mj_footer respondsToSelector:NSSelectorFromString(@"labelIsTrigger")] ) {
-        [self.mj_footer setValue:@(YES) forKey:@"labelIsTrigger"];
-        [self.mj_footer beginRefreshing];
-        [self.mj_footer setValue:@(NO) forKey:@"labelIsTrigger"];
+    
+    if ( self.mj_footer.state != MJRefreshStateIdle ) {
+        [self.mj_footer endRefreshing];
     }
-    else {
-        [self.mj_footer beginRefreshing];
-    }
-    [self _showOrHiddenPlaceholderViewIfNeeded];
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ( [self.mj_footer respondsToSelector:NSSelectorFromString(@"labelIsTrigger")] ) {
+            [self.mj_footer setValue:@(YES) forKey:@"labelIsTrigger"];
+            [self.mj_footer beginRefreshing];
+            [self.mj_footer setValue:@(NO) forKey:@"labelIsTrigger"];
+        }
+        else {
+            [self.mj_footer beginRefreshing];
+        }
+        [self _showOrHiddenPlaceholderViewIfNeeded];
+    });
 }
 
 - (void)sj_resetState {
+    self.sj_pageNum = self.sj_beginPageNum;
     self.mj_footer.hidden = YES;
     [self _showOrHiddenPlaceholderViewIfNeeded];
 }
@@ -283,7 +296,6 @@ char const SJRefreshingNonePageSize = -1;
 - (NSInteger)sj_pageSize {
     return self.sj_refreshConfig.sj_pageSize;
 }
-
 @end
 
 @implementation UIScrollView (SJRefreshUIConfig)
@@ -318,4 +330,19 @@ char const SJRefreshingNonePageSize = -1;
     [config configFooter:(MJRefreshAutoGifFooter *)self.mj_footer];
 }
 @end
+
+@implementation SJRefreshOptions
+- (instancetype)initWithBeginPageNum:(NSInteger)beginPageNum pageSize:(short)pageSize disabledHeaderRefreshing:(BOOL)isDisabledHeaderRefreshing disabledFooterRefreshing:(BOOL)isDisabledFooterRefreshing refreshingExecuteBlock:(void(^)(__kindof UIScrollView *scrollView, NSInteger pageNum))refreshingExecuteBlock {
+    self = [super init];
+    if ( self ) {
+        _beginPageNum = beginPageNum;
+        _pageSize = pageSize;
+        _disabledHeaderRefreshing = isDisabledHeaderRefreshing;
+        _disabledFooterRefreshing = isDisabledFooterRefreshing;
+        _refreshingExecuteBlock = refreshingExecuteBlock;
+    }
+    return self;
+}
+@end
+
 NS_ASSUME_NONNULL_END

@@ -8,36 +8,43 @@
 
 #import <UIKit/UIKit.h>
 #import "SJPageMenuItemViewDefines.h"
-@protocol SJPageMenuBarDelegate, SJPageMenuBarGestureHandler, SJPageMenuBarScrollIndicator;
+@protocol SJPageMenuBarDataSource, SJPageMenuBarDelegate, SJPageMenuBarGestureHandler, SJPageMenuBarScrollIndicator;
 
-typedef enum : NSUInteger {
+typedef NS_ENUM(NSUInteger, SJPageMenuBarDistribution) {
     SJPageMenuBarDistributionEqualSpacing,
     
     ///
     /// fill equally 将忽略 spacing, 所有 item 等宽分布
     ///
     SJPageMenuBarDistributionFillEqually,
-} SJPageMenuBarDistribution;
+};
 
-typedef enum : NSUInteger {
+typedef NS_ENUM(NSUInteger, SJPageMenuBarScrollIndicatorLayoutMode) {
     SJPageMenuBarScrollIndicatorLayoutModeSpecifiedWidth,
     SJPageMenuBarScrollIndicatorLayoutModeEqualItemViewContentWidth,
     SJPageMenuBarScrollIndicatorLayoutModeEqualItemViewLayoutWidth,
-} SJPageMenuBarScrollIndicatorLayoutMode;
+};
 
 NS_ASSUME_NONNULL_BEGIN
 @interface SJPageMenuBar : UIView
+- (instancetype)initWithFrame:(CGRect)frame;
+
+@property (nonatomic, weak, nullable) id<SJPageMenuBarDataSource> dataSource;
 @property (nonatomic, weak, nullable) id<SJPageMenuBarDelegate> delegate;
+- (void)reloadData;
+
 @property (nonatomic, readonly) NSUInteger focusedIndex;
+@property (nonatomic, readonly) NSUInteger numberOfItems;
  
 - (void)scrollToItemAtIndex:(NSUInteger)index animated:(BOOL)animated;
 - (void)scrollInRange:(NSRange)range distanceProgress:(CGFloat)progress;
  
-@property (nonatomic, copy, nullable) NSArray<__kindof UIView<SJPageMenuItemView> *> *itemViews;
-@property (nonatomic, readonly) NSUInteger numberOfItems;
 - (nullable __kindof UIView<SJPageMenuItemView> *)viewForItemAtIndex:(NSUInteger)index;
+- (nullable __kindof UIView<SJPageMenuItemView> *)viewForItemAtPoint:(CGPoint)location;
+- (NSInteger)indexOfItemView:(UIView<SJPageMenuItemView> *)itemView;
+- (NSInteger)indexOfItemViewAtPoint:(CGPoint)location;
 
-- (void)insertItemAtIndex:(NSUInteger)index view:(__kindof UIView<SJPageMenuItemView> *)newView animated:(BOOL)animated;
+- (void)insertItemAtIndex:(NSUInteger)index animated:(BOOL)animated;
 - (void)deleteItemAtIndex:(NSUInteger)index animated:(BOOL)animated;
 - (void)reloadItemAtIndex:(NSUInteger)index animated:(BOOL)animated;
 - (void)moveItemAtIndex:(NSUInteger)index toIndex:(NSUInteger)newIndex animated:(BOOL)animated;
@@ -64,6 +71,15 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, getter=isEnabledFadeIn) BOOL enabledFadeIn;        ///< enable fade in on the left. default is `NO`.
 @property (nonatomic, getter=isEnabledFadeOut) BOOL enabledFadeOut;      ///< enable fade out on the right. default is `NO`.
+
+@property (nonatomic, copy, nullable) void(^layoutSubviewsExecuteBlock)(__kindof SJPageMenuBar *pageMenuBar);
+@end
+
+
+@protocol SJPageMenuBarDataSource <NSObject>
+@required
+- (NSUInteger)numberOfItemsInPageMenuBar:(SJPageMenuBar *)bar;
+- (__kindof UIView<SJPageMenuItemView> *)pageMenuBar:(SJPageMenuBar *)bar viewForItemAtIndex:(NSInteger)index;
 @end
 
 
@@ -75,5 +91,6 @@ NS_ASSUME_NONNULL_BEGIN
 
 @protocol SJPageMenuBarGestureHandler <NSObject>
 @property (nonatomic, copy, nullable) void(^singleTapHandler)(SJPageMenuBar *bar, CGPoint location); // 单击手势的处理, 默认为滚动到点击的位置
-@end  
+@end
+
 NS_ASSUME_NONNULL_END
